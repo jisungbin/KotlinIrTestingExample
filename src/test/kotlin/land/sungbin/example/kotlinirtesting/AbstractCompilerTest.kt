@@ -1,11 +1,13 @@
 package land.sungbin.example.kotlinirtesting
 
+import androidx.compose.compiler.plugins.kotlin.ComposePluginRegistrar
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.io.FileUtil
 import land.sungbin.example.kotlinirtesting.facade.AnalysisResult
 import land.sungbin.example.kotlinirtesting.facade.KotlinCompilerFacade
 import land.sungbin.example.kotlinirtesting.facade.SourceFile
+import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
 import org.jetbrains.kotlin.backend.common.output.OutputFile
 import org.jetbrains.kotlin.cli.jvm.config.addJvmClasspathRoots
 import org.jetbrains.kotlin.cli.jvm.config.configureJdkClasspathRoots
@@ -100,7 +102,14 @@ abstract class AbstractCompilerTest(val useFir: Boolean) {
       }
       configureJdkClasspathRoots()
     },
-    registerExtensions = registerExtensions,
+    registerExtensions = { configuration ->
+      ComposePluginRegistrar.registerCommonExtensions(this)
+      IrGenerationExtension.registerExtension(
+        project = this,
+        extension = ComposePluginRegistrar.createComposeIrExtension(configuration),
+      )
+      registerExtensions(configuration)
+    },
   )
 
   protected fun analyze(

@@ -16,10 +16,12 @@ kotlin {
 
 repositories {
   mavenCentral()
+  google()
 }
 
 dependencies {
+  testImplementation("androidx.compose.runtime:runtime:1.6.2")
+  testImplementation("androidx.compose.compiler:compiler-hosted:1.5.10")
   testImplementation(kotlin("compiler", kotlinVersion))
-  testImplementation(kotlin("stdlib", kotlinVersion))
   testImplementation("junit:junit:4.13.2")
 }

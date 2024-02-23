@@ -1,5 +1,6 @@
 package land.sungbin.example.kotlinirtesting.facade
 
+import androidx.compose.compiler.plugins.kotlin.ComposePluginRegistrar
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.TextRange
@@ -105,6 +106,8 @@ abstract class KotlinCompilerFacade(val environment: KotlinCoreEnvironment) {
         initialConfiguration = configuration,
         extensionConfigs = EnvironmentConfigFiles.JVM_CONFIG_FILES,
       )
+
+      ComposePluginRegistrar.checkCompilerVersion(configuration)
 
       environment.project.registerExtensions(configuration)
 

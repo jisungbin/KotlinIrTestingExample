@@ -1,6 +1,5 @@
 package land.sungbin.example.kotlinirtesting
 
-import java.util.Locale
 import org.jetbrains.kotlin.descriptors.DescriptorVisibilities
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.ir.IrBuiltIns
@@ -105,6 +104,7 @@ import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.name.SpecialNames
 import org.jetbrains.kotlin.types.Variance
 import org.jetbrains.kotlin.utils.Printer
+import java.util.Locale
 
 fun IrElement.dumpSrc(useFir: Boolean = false): String {
   val sb = StringBuilder()
@@ -126,7 +126,7 @@ fun IrElement.dumpSrc(useFir: Boolean = false): String {
 
 class Scope(
   val owner: IrFunction? = null,
-  val localValues: HashSet<IrValueDeclaration> = hashSetOf()
+  val localValues: HashSet<IrValueDeclaration> = hashSetOf(),
 )
 
 class IrSourcePrinterVisitor(
@@ -144,8 +144,6 @@ class IrSourcePrinterVisitor(
   private fun print(obj: Any?) = printer.print(obj)
   private fun println(obj: Any?) = printer.println(obj)
   private fun println() = printer.println()
-
-  fun printType(type: IrType) = type.renderSrc()
 
   private inline fun IrFunction.scoped(block: (IrFunction) -> Unit) {
     val previousScope = currentScope
@@ -297,7 +295,8 @@ class IrSourcePrinterVisitor(
             when (fn.name.asString()) {
               "equals",
               "EQEQ",
-              "EQEQEQ" -> {
+              "EQEQEQ",
+              -> {
                 val prevIsInNotCall = isInNotCall
                 isInNotCall = true
                 arg.print()
@@ -338,7 +337,8 @@ class IrSourcePrinterVisitor(
         // no names for
         "invoke", "get", "set" -> ""
         "iterator", "hasNext", "next", "getValue", "setValue",
-        "noWhenBranchMatchedException" -> name
+        "noWhenBranchMatchedException",
+        -> name
         "CHECK_NOT_NULL" -> "!!"
         else -> {
           if (name.startsWith("component")) name
@@ -349,7 +349,8 @@ class IrSourcePrinterVisitor(
       val printBinary = when (name) {
         "equals",
         "EQEQ",
-        "EQEQEQ" -> when {
+        "EQEQEQ",
+        -> when {
           expression.dispatchReceiver?.type?.isInt() == true -> true
           expression.extensionReceiver?.type?.isInt() == true -> true
           expression.valueArgumentsCount > 0 &&
@@ -405,13 +406,15 @@ class IrSourcePrinterVisitor(
         }
         // builtin static operators
         "greater", "less", "lessOrEqual", "greaterOrEqual", "EQEQ", "EQEQEQ",
-        "ieee754equals" -> {
+        "ieee754equals",
+        -> {
           expression.getValueArgument(0)?.print()
           print(" $opSymbol ")
           expression.getValueArgument(1)?.print()
         }
         "iterator", "hasNext", "next",
-        "noWhenBranchMatchedException" -> {
+        "noWhenBranchMatchedException",
+        -> {
           (expression.dispatchReceiver ?: expression.extensionReceiver)?.print()
           print(".")
           print(opSymbol)
@@ -494,7 +497,7 @@ class IrSourcePrinterVisitor(
 
   private fun IrFunctionAccessExpression.printArgumentList(
     forceParameterNames: Boolean = false,
-    forceSingleLine: Boolean = false
+    forceSingleLine: Boolean = false,
   ) {
     val arguments = mutableListOf<IrExpression>()
     val paramNames = mutableListOf<String>()
@@ -531,6 +534,7 @@ class IrSourcePrinterVisitor(
         println()
         indented {
           arguments.zip(paramNames).forEachIndexed { i, (arg, name) ->
+            @Suppress("KotlinConstantConditions")
             if (useParameterNames) {
               print(name)
               print(" = ")
@@ -1344,7 +1348,7 @@ class IrSourcePrinterVisitor(
   }
 
   override fun visitLocalDelegatedPropertyReference(
-    expression: IrLocalDelegatedPropertyReference
+    expression: IrLocalDelegatedPropertyReference,
   ) {
     print("::")
     print(expression.delegate.owner.name)
@@ -1590,7 +1594,7 @@ private inline fun <T> StringBuilder.appendListWith(
   prefix: String,
   postfix: String,
   separator: String,
-  renderItem: StringBuilder.(T) -> Unit
+  renderItem: StringBuilder.(T) -> Unit,
 ) {
   append(prefix)
   var isFirst = true

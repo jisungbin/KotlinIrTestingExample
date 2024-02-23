@@ -3,8 +3,6 @@ package land.sungbin.example.kotlinirtesting
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.io.FileUtil
-import java.io.File
-import java.net.URLClassLoader
 import land.sungbin.example.kotlinirtesting.facade.AnalysisResult
 import land.sungbin.example.kotlinirtesting.facade.KotlinCompilerFacade
 import land.sungbin.example.kotlinirtesting.facade.SourceFile
@@ -25,6 +23,8 @@ import org.junit.After
 import org.junit.BeforeClass
 import org.junit.runner.RunWith
 import org.junit.runners.Parameterized
+import java.io.File
+import java.net.URLClassLoader
 
 @RunWith(Parameterized::class)
 abstract class AbstractCompilerTest(val useFir: Boolean) {
@@ -33,34 +33,14 @@ abstract class AbstractCompilerTest(val useFir: Boolean) {
     @Parameterized.Parameters(name = "useFir = {0}")
     fun data() = arrayOf<Any>(false, true)
 
-    private fun File.applyExistenceCheck(): File = apply {
-      if (!exists()) throw NoSuchFileException(this)
-    }
+    private fun File.applyExistenceCheck(): File =
+      apply { if (!exists()) throw NoSuchFileException(this) }
 
     private val homeDir: String = run {
       val userDir = System.getProperty("user.dir")
       val dir = File(userDir ?: ".")
       val path = FileUtil.toCanonicalPath(dir.absolutePath)
       File(path).applyExistenceCheck().absolutePath
-    }
-
-    private val projectRoot: String by lazy {
-      File(homeDir, "../../../../../..").applyExistenceCheck().absolutePath
-    }
-
-    val kotlinHome: File by lazy {
-      File(projectRoot, "prebuilts/androidx/external/org/jetbrains/kotlin/")
-        .applyExistenceCheck()
-    }
-
-    private val outDir: File by lazy {
-      File(System.getenv("OUT_DIR") ?: File(projectRoot, "out").absolutePath)
-        .applyExistenceCheck()
-    }
-
-    val composePluginJar: File by lazy {
-      File(outDir, "androidx/compose/compiler/compiler/build/repackaged/embedded.jar")
-        .applyExistenceCheck()
     }
 
     @JvmStatic
@@ -72,15 +52,13 @@ abstract class AbstractCompilerTest(val useFir: Boolean) {
     }
 
     val defaultClassPath by lazy {
-      System.getProperty("java.class.path")!!.split(
-        File.pathSeparator!!
-      ).map { File(it) }
+      System.getProperty("java.class.path")!!.split(File.pathSeparator!!).map(::File)
     }
 
     val defaultClassPathRoots by lazy {
-      defaultClassPath.filter {
-        !it.path.contains("robolectric") && it.extension != "xml"
-      }.toList()
+      defaultClassPath.filter { file ->
+        !file.path.contains("robolectric") && file.extension != "xml"
+      }
     }
   }
 
@@ -96,117 +74,72 @@ abstract class AbstractCompilerTest(val useFir: Boolean) {
   private fun createCompilerFacade(
     additionalPaths: List<File> = listOf(),
     forcedFirSetting: Boolean? = null,
-    registerExtensions: (Project.(CompilerConfiguration) -> Unit)? = null,
+    registerExtensions: Project.(CompilerConfiguration) -> Unit = {},
   ) = KotlinCompilerFacade.create(
-    testRootDisposable,
+    disposable = testRootDisposable,
     updateConfiguration = {
-      val enableFir = if (forcedFirSetting != null) forcedFirSetting else useFir
-      val languageVersion =
-        if (enableFir) {
-          LanguageVersion.KOTLIN_2_0
-        } else {
-          LanguageVersion.KOTLIN_1_9
-        }
+      val enableFir = forcedFirSetting ?: useFir
+      val languageVersion = if (enableFir) LanguageVersion.KOTLIN_2_0 else LanguageVersion.KOTLIN_1_9
       // For tests, allow unstable artifacts compiled with a pre-release compiler
       // as input to stable compilations.
       val analysisFlags: Map<AnalysisFlag<*>, Any?> = mapOf(
         AnalysisFlags.allowUnstableDependencies to true,
-        AnalysisFlags.skipPrereleaseCheck to true
+        AnalysisFlags.skipPrereleaseCheck to true,
       )
       languageVersionSettings = LanguageVersionSettingsImpl(
-        languageVersion,
-        ApiVersion.createByLanguageVersion(languageVersion),
-        analysisFlags
+        languageVersion = languageVersion,
+        apiVersion = ApiVersion.createByLanguageVersion(languageVersion),
+        analysisFlags = analysisFlags,
       )
       updateConfiguration()
       addJvmClasspathRoots(additionalPaths)
       addJvmClasspathRoots(defaultClassPathRoots)
-      if (!getBoolean(JVMConfigurationKeys.NO_JDK) &&
-        get(JVMConfigurationKeys.JDK_HOME) == null) {
+      if (!getBoolean(JVMConfigurationKeys.NO_JDK) && get(JVMConfigurationKeys.JDK_HOME) == null) {
         // We need to set `JDK_HOME` explicitly to use JDK 17
         put(JVMConfigurationKeys.JDK_HOME, File(System.getProperty("java.home")!!))
       }
       configureJdkClasspathRoots()
     },
-    registerExtensions = registerExtensions ?: { configuration ->
-      // TODO:
-//      ComposePluginRegistrar.registerCommonExtensions(this)
-//      IrGenerationExtension.registerExtension(
-//        this,
-//        ComposePluginRegistrar.createComposeIrExtension(configuration)
-//      )
-    }
+    registerExtensions = registerExtensions,
   )
 
   protected fun analyze(
     platformSources: List<SourceFile>,
-    commonSources: List<SourceFile> = listOf(),
+    commonSources: List<SourceFile> = emptyList(),
   ): AnalysisResult =
-    createCompilerFacade().analyze(platformSources, commonSources)
+    createCompilerFacade().analyze(platformFiles = platformSources, commonFiles = commonSources)
 
   protected fun compileToIr(
     sourceFiles: List<SourceFile>,
-    additionalPaths: List<File> = listOf(),
-    registerExtensions: (Project.(CompilerConfiguration) -> Unit)? = null,
+    additionalPaths: List<File> = emptyList(),
+    registerExtensions: Project.(CompilerConfiguration) -> Unit = {},
   ): IrModuleFragment =
-    createCompilerFacade(additionalPaths, registerExtensions = registerExtensions)
+    createCompilerFacade(additionalPaths = additionalPaths, registerExtensions = registerExtensions)
       .compileToIr(sourceFiles)
 
   protected fun createClassLoader(
     platformSourceFiles: List<SourceFile>,
-    commonSourceFiles: List<SourceFile> = listOf(),
-    additionalPaths: List<File> = listOf(),
+    commonSourceFiles: List<SourceFile> = emptyList(),
+    additionalPaths: List<File> = emptyList(),
     forcedFirSetting: Boolean? = null,
   ): GeneratedClassLoader {
+    @Suppress("InconsistentCommentForJavaParameter")
     val classLoader = URLClassLoader(
-      (additionalPaths + defaultClassPath).map {
-        it.toURI().toURL()
-      }.toTypedArray(),
-      null
+      /* URL[] = */ (additionalPaths + defaultClassPath).map { file -> file.toURI().toURL() }.toTypedArray(),
+      /* ClassLoader = */ null,
     )
     return GeneratedClassLoader(
-      createCompilerFacade(additionalPaths, forcedFirSetting)
-        .compile(platformSourceFiles, commonSourceFiles).factory,
-      classLoader
+      /* factory = */
+      createCompilerFacade(additionalPaths = additionalPaths, forcedFirSetting = forcedFirSetting)
+        .compile(platformFiles = platformSourceFiles, commonFiles = commonSourceFiles)
+        .factory,
+      /* parentClassLoader = */ classLoader,
     )
   }
-}
-
-fun printPublicApi(classDump: String, name: String): String {
-  return classDump
-    .splitToSequence("\n")
-    .filter {
-      if (it.contains("INVOKESTATIC kotlin/internal/ir/Intrinsic")) {
-        // if instructions like this end up in our generated code, it means something
-        // went wrong. Usually it means that it just can't find the function to call,
-        // so it transforms it into this intrinsic call instead of failing. If this
-        // happens, we want to hard-fail the test as the code is definitely incorrect.
-        error(
-          buildString {
-            append("An unresolved call was found in the generated bytecode of '")
-            append(name)
-            append("'")
-            appendLine()
-            appendLine()
-            appendLine("Call was: $it")
-            appendLine()
-            appendLine("Entire class file output:")
-            appendLine(classDump)
-          }
-        )
-      }
-      if (it.startsWith("  ")) {
-        if (it.startsWith("   ")) false
-        else it[2] != '/' && it[2] != '@'
-      } else {
-        it == "}" || it.endsWith("{")
-      }
-    }
-    .joinToString(separator = "\n")
-    .replace('$', '%') // replace $ to % to make comparing it to kotlin string literals easier
 }
 
 fun OutputFile.writeToDir(directory: File) =
   FileUtil.writeToFile(File(directory, relativePath), asByteArray())
 
-fun Collection<OutputFile>.writeToDir(directory: File) = forEach { it.writeToDir(directory) }
+fun Collection<OutputFile>.writeToDir(directory: File) =
+  forEach { file -> file.writeToDir(directory) }

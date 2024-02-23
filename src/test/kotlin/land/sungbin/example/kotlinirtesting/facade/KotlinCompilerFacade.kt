@@ -7,8 +7,7 @@ import com.intellij.openapi.util.text.StringUtilRt
 import com.intellij.psi.PsiFileFactory
 import com.intellij.psi.impl.PsiFileFactoryImpl
 import com.intellij.testFramework.LightVirtualFile
-import java.nio.charset.StandardCharsets
-import land.sungbin.example.kotlinirtesting.exception.TestsCompilerError
+import land.sungbin.example.kotlinirtesting.exception.TestCompilerException
 import org.jetbrains.kotlin.cli.common.CLIConfigurationKeys
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSourceLocation
@@ -27,6 +26,7 @@ import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
 import org.jetbrains.kotlin.ir.util.IrMessageLogger
 import org.jetbrains.kotlin.psi.KtFile
 import org.jetbrains.kotlin.resolve.AnalyzingUtils
+import java.nio.charset.StandardCharsets
 
 class SourceFile(
   val name: String,
@@ -35,29 +35,32 @@ class SourceFile(
   val path: String = "",
 ) {
   fun toKtFile(project: Project): KtFile {
-    val shortName = name.substring(name.lastIndexOf('/') + 1).let {
-      it.substring(it.lastIndexOf('\\') + 1)
+    val shortName = name.substring(name.lastIndexOf('/') + 1).let { name ->
+      name.substring(name.lastIndexOf('\\') + 1)
     }
 
     val virtualFile = object : LightVirtualFile(
-      shortName,
-      KotlinLanguage.INSTANCE,
-      StringUtilRt.convertLineSeparators(source)
+      /* name = */ shortName,
+      /* language = */ KotlinLanguage.INSTANCE,
+      /* text = */ StringUtilRt.convertLineSeparators(source),
     ) {
       override fun getPath(): String = "${this@SourceFile.path}/$name"
     }
-
     virtualFile.charset = StandardCharsets.UTF_8
+
     val factory = PsiFileFactory.getInstance(project) as PsiFileFactoryImpl
     val ktFile = factory.trySetupPsiForFile(
-      virtualFile, KotlinLanguage.INSTANCE, true, false
+      /* virtualFile = */ virtualFile,
+      /* language = */ KotlinLanguage.INSTANCE,
+      /* physical = */ true,
+      /* markAsCopy = */ false,
     ) as KtFile
 
     if (!ignoreParseErrors) {
       try {
         AnalyzingUtils.checkForSyntacticErrors(ktFile)
-      } catch (e: Exception) {
-        throw TestsCompilerError(e)
+      } catch (exception: Exception) {
+        throw TestCompilerException(exception)
       }
     }
     return ktFile
@@ -65,28 +68,20 @@ class SourceFile(
 }
 
 interface AnalysisResult {
-  data class Diagnostic(
-    val factoryName: String,
-    val textRanges: List<TextRange>,
-  )
+  data class Diagnostic(val factoryName: String, val textRanges: List<TextRange>)
 
   val files: List<KtFile>
   val diagnostics: Map<String, List<Diagnostic>>
 }
 
 abstract class KotlinCompilerFacade(val environment: KotlinCoreEnvironment) {
-  abstract fun analyze(
-    platformFiles: List<SourceFile>,
-    commonFiles: List<SourceFile>,
-  ): AnalysisResult
+  abstract fun analyze(platformFiles: List<SourceFile>, commonFiles: List<SourceFile>): AnalysisResult
 
   abstract fun compileToIr(files: List<SourceFile>): IrModuleFragment
-  abstract fun compile(
-    platformFiles: List<SourceFile>,
-    commonFiles: List<SourceFile>,
-  ): GenerationState
+  abstract fun compile(platformFiles: List<SourceFile>, commonFiles: List<SourceFile>): GenerationState
 
   companion object {
+    @Suppress("MemberVisibilityCanBePrivate")
     const val TEST_MODULE_NAME = "test-module"
 
     fun create(
@@ -98,7 +93,7 @@ abstract class KotlinCompilerFacade(val environment: KotlinCoreEnvironment) {
         put(CommonConfigurationKeys.MODULE_NAME, TEST_MODULE_NAME)
         put(JVMConfigurationKeys.IR, true)
         put(JVMConfigurationKeys.VALIDATE_IR, true)
-        put(JVMConfigurationKeys.JVM_TARGET, JvmTarget.JVM_1_8)
+        put(JVMConfigurationKeys.JVM_TARGET, JvmTarget.JVM_17)
         put(CLIConfigurationKeys.MESSAGE_COLLECTOR_KEY, TestMessageCollector)
         put(IrMessageLogger.IR_MESSAGE_LOGGER, IrMessageCollector(TestMessageCollector))
         updateConfiguration()
@@ -106,10 +101,10 @@ abstract class KotlinCompilerFacade(val environment: KotlinCoreEnvironment) {
       }
 
       val environment = KotlinCoreEnvironment.createForTests(
-        disposable, configuration, EnvironmentConfigFiles.JVM_CONFIG_FILES
+        parentDisposable = disposable,
+        initialConfiguration = configuration,
+        extensionConfigs = EnvironmentConfigFiles.JVM_CONFIG_FILES,
       )
-
-      // TODO: ComposePluginRegistrar.checkCompilerVersion(configuration)
 
       environment.project.registerExtensions(configuration)
 
@@ -132,15 +127,11 @@ private object TestMessageCollector : MessageCollector {
   ) {
     if (severity === CompilerMessageSeverity.ERROR) {
       throw AssertionError(
-        if (location == null)
-          message
-        else
-          "(${location.path}:${location.line}:${location.column}) $message"
+        if (location == null) message
+        else "(${location.path}:${location.line}:${location.column}) $message",
       )
     }
   }
 
-  override fun hasErrors(): Boolean {
-    return false
-  }
+  override fun hasErrors() = false
 }

@@ -1,86 +1,22 @@
+@file:Suppress("MemberVisibilityCanBePrivate")
+
 package land.sungbin.example.kotlinirtesting
 
-import java.io.File
 import land.sungbin.example.kotlinirtesting.facade.SourceFile
 import org.intellij.lang.annotations.Language
-import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.util.dump
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
+import java.io.File
 
 abstract class AbstractIrTransformTest(useFir: Boolean) : AbstractCodegenTest(useFir) {
-  override fun CompilerConfiguration.updateConfiguration() {
-    // TODO
-  }
+  @get:Rule
+  val classesDirectory: TemporaryFolder = TemporaryFolder.builder().assureDeletion().build()
 
-  @JvmField
-  @Rule
-  val classesDirectory = TemporaryFolder()
-
-  @JvmField
-  @Rule
-  val goldenTransformRule =
-    GoldenTransformRule("src/test/resources/golden")
-
-  fun verifyCrossModuleComposeIrTransform(
-    @Language("kotlin")
-    dependencySource: String,
-    @Language("kotlin")
-    source: String,
-    expectedTransformed: String,
-    dumpTree: Boolean = false,
-    dumpClasses: Boolean = false,
-    validator: (element: IrElement) -> Unit = {},
-  ) {
-    val dependencyFileName = "Test_REPLACEME_${uniqueNumber++}"
-
-    classLoader(dependencySource, dependencyFileName, dumpClasses)
-      .allGeneratedFiles
-      .also {
-        // Write the files to the class directory so they can be used by the next module
-        // and the application
-        it.writeToDir(classesDirectory.root)
-      }
-
-    verifyComposeIrTransform(
-      source,
-      expectedTransformed,
-      "",
-      validator = validator,
-      dumpTree = dumpTree,
-      additionalPaths = listOf(classesDirectory.root)
-    )
-  }
-
-  fun verifyGoldenCrossModuleComposeIrTransform(
-    @Language("kotlin")
-    dependencySource: String,
-    @Language("kotlin")
-    source: String,
-    dumpTree: Boolean = false,
-    dumpClasses: Boolean = false,
-    validator: (element: IrElement) -> Unit = {},
-  ) {
-    val dependencyFileName = "Test_REPLACEME_${uniqueNumber++}"
-
-    classLoader(dependencySource, dependencyFileName, dumpClasses)
-      .allGeneratedFiles
-      .also {
-        // Write the files to the class directory so they can be used by the next module
-        // and the application
-        it.writeToDir(classesDirectory.root)
-      }
-
-    verifyGoldenComposeIrTransform(
-      source,
-      "",
-      validator = validator,
-      dumpTree = dumpTree,
-      additionalPaths = listOf(classesDirectory.root)
-    )
-  }
+  @get:Rule
+  val goldenTransformRule = GoldenTransformRule("src/test/resources/golden")
 
   fun transform(
     @Language("kotlin")
@@ -90,115 +26,77 @@ abstract class AbstractIrTransformTest(useFir: Boolean) : AbstractCodegenTest(us
     validator: (element: IrElement) -> Unit = {},
     dumpTree: Boolean = false,
     truncateTracingInfoMode: TruncateTracingInfoMode = TruncateTracingInfoMode.TRUNCATE_KEY,
-    additionalPaths: List<File> = listOf(),
+    additionalPaths: List<File> = emptyList(),
   ): String {
-    val files = listOf(SourceFile("Test.kt", source), SourceFile("Extra.kt", extra))
-    val irModule = compileToIr(files, additionalPaths)
+    fun IrElement.validate(): IrElement = also(validator)
+
     val keySet = mutableListOf<Int>()
-    fun IrElement.validate(): IrElement = this.also { validator(it) }
-    val actualTransformed = irModule
-      .files[0]
-      .validate()
-      .dumpSrc(useFir)
-      .replace('$', '%')
-      // replace source keys for start group calls
-      .replace(
-        Regex(
-          "(%composer\\.start(Restart|Movable|Replaceable)Group\\()-?((0b)?[-\\d]+)"
-        )
-      ) {
-        val stringKey = it.groupValues[3]
-        val key = if (stringKey.startsWith("0b"))
-          Integer.parseInt(stringKey.drop(2), 2)
-        else
-          stringKey.toInt()
-        if (key in keySet) {
-          "${it.groupValues[1]}<!DUPLICATE KEY: $key!>"
-        } else {
-          keySet.add(key)
-          "${it.groupValues[1]}<>"
-        }
-      }
-      .replace(
-        Regex("(sourceInformationMarkerStart\\(%composer, )([-\\d]+)")
-      ) {
-        "${it.groupValues[1]}<>"
-      }
-      // replace traceEventStart values with a token
-      // TODO(174715171): capture actual values for testing
-      .replace(
-        Regex(
-          "traceEventStart\\(-?\\d+, (%dirty|%changed|-1), (%dirty1|%changed1|-1), (.*)"
-        )
-      ) {
-        when (truncateTracingInfoMode) {
-          TruncateTracingInfoMode.TRUNCATE_KEY ->
-            "traceEventStart(<>, ${it.groupValues[1]}, ${it.groupValues[2]}, <>)"
+    val files = listOf(SourceFile("Test.kt", source), SourceFile("Extra.kt", extra))
+    val irModule = compileToIr(sourceFiles = files, additionalPaths = additionalPaths)
 
-          TruncateTracingInfoMode.KEEP_INFO_STRING ->
-            "traceEventStart(<>, ${it.groupValues[1]}, ${it.groupValues[2]}, " +
-              it.groupValues[3]
+    val actualTransformed =
+      irModule
+        .files[0]
+        .validate()
+        .dumpSrc(useFir)
+        .replace('$', '%')
+        // replace source keys for start group calls
+        .replace(Regex("(%composer\\.start(Restart|Movable|Replaceable)Group\\()-?((0b)?[-\\d]+)")) { match ->
+          val stringKey = match.groupValues[3]
+          val key = if (stringKey.startsWith("0b")) Integer.parseInt(stringKey.drop(2), 2)
+          else stringKey.toInt()
+          if (key in keySet) {
+            "${match.groupValues[1]}<!DUPLICATE KEY: $key!>"
+          } else {
+            keySet.add(key)
+            "${match.groupValues[1]}<>"
+          }
         }
-      }
-      // replace source information with source it references
-      .replace(
-        Regex(
-          "(%composer\\.start(Restart|Movable|Replaceable)Group\\" +
-            "([^\"\\n]*)\"(.*)\"\\)"
-        )
-      ) {
-        "${it.groupValues[1]}\"${generateSourceInfo(it.groupValues[4], source)}\")"
-      }
-      .replace(
-        Regex("(sourceInformation(MarkerStart)?\\(.*)\"(.*)\"\\)")
-      ) {
-        "${it.groupValues[1]}\"${generateSourceInfo(it.groupValues[3], source)}\")"
-      }
-      .replace(
-        Regex(
-          "(composableLambda[N]?\\" +
-            "([^\"\\n]*)\"(.*)\"\\)"
-        )
-      ) {
-        "${it.groupValues[1]}\"${generateSourceInfo(it.groupValues[2], source)}\")"
-      }
-      .replace(
-        Regex("(rememberComposableLambda[N]?)\\((-?\\d+)")
-      ) {
-        "${it.groupValues[1]}(<>"
-      }
-      // replace source keys for joinKey calls
-      .replace(
-        Regex(
-          "(%composer\\.joinKey\\()([-\\d]+)"
-        )
-      ) {
-        "${it.groupValues[1]}<>"
-      }
-      // composableLambdaInstance(<>, true)
-      .replace(
-        Regex(
-          "(composableLambdaInstance\\()([-\\d]+, (true|false))"
-        )
-      ) {
-        val callStart = it.groupValues[1]
-        val tracked = it.groupValues[3]
-        "$callStart<>, $tracked"
-      }
-      // composableLambda(%composer, <>, true)
-      .replace(
-        Regex(
-          "(composableLambda\\(%composer,\\s)([-\\d]+)"
-        )
-      ) {
-        "${it.groupValues[1]}<>"
-      }
-      .trimIndent()
-      .trimTrailingWhitespacesAndAddNewlineAtEOF()
+        .replace(Regex("(sourceInformationMarkerStart\\(%composer, )([-\\d]+)")) { match ->
+          "${match.groupValues[1]}<>"
+        }
+        // replace traceEventStart values with a token
+        // TODO(174715171): capture actual values for testing
+        .replace(Regex("traceEventStart\\(-?\\d+, (%dirty|%changed|-1), (%dirty1|%changed1|-1), (.*)")) { match ->
+          when (truncateTracingInfoMode) {
+            TruncateTracingInfoMode.TRUNCATE_KEY ->
+              "traceEventStart(<>, ${match.groupValues[1]}, ${match.groupValues[2]}, <>)"
 
-    if (dumpTree) {
-      println(irModule.dump())
-    }
+            TruncateTracingInfoMode.KEEP_INFO_STRING ->
+              "traceEventStart(<>, ${match.groupValues[1]}, ${match.groupValues[2]}, ${match.groupValues[3]}"
+          }
+        }
+        // replace source information with source it references
+        .replace(Regex("(%composer\\.start(Restart|Movable|Replaceable)Group\\([^\"\\n]*)\"(.*)\"\\)")) { match ->
+          "${match.groupValues[1]}\"${generateSourceInfo(match.groupValues[4], source)}\")"
+        }
+        .replace(Regex("(sourceInformation(MarkerStart)?\\(.*)\"(.*)\"\\)")) { match ->
+          "${match.groupValues[1]}\"${generateSourceInfo(match.groupValues[3], source)}\")"
+        }
+        .replace(@Suppress("RegExpSimplifiable") Regex("(composableLambda[N]?\\([^\"\\n]*)\"(.*)\"\\)")) { match ->
+          "${match.groupValues[1]}\"${generateSourceInfo(match.groupValues[2], source)}\")"
+        }
+        .replace(Regex(@Suppress("RegExpSimplifiable") "(rememberComposableLambda[N]?)\\((-?\\d+)")) { match ->
+          "${match.groupValues[1]}(<>"
+        }
+        // replace source keys for joinKey calls
+        .replace(Regex("(%composer\\.joinKey\\()([-\\d]+)")) { match ->
+          "${match.groupValues[1]}<>"
+        }
+        // composableLambdaInstance(<>, true)
+        .replace(Regex("(composableLambdaInstance\\()([-\\d]+, (true|false))")) { match ->
+          val callStart = match.groupValues[1]
+          val tracked = match.groupValues[3]
+          "$callStart<>, $tracked"
+        }
+        // composableLambda(%composer, <>, true)
+        .replace(Regex("(composableLambda\\(%composer,\\s)([-\\d]+)")) { match ->
+          "${match.groupValues[1]}<>"
+        }
+        .trimIndent()
+        .trimTrailingWhitespacesAndAddNewlineAtEOF()
+
+    if (dumpTree) println(irModule.dump())
 
     return actualTransformed
   }
@@ -212,15 +110,22 @@ abstract class AbstractIrTransformTest(useFir: Boolean) : AbstractCodegenTest(us
     validator: (element: IrElement) -> Unit = {},
     dumpTree: Boolean = false,
     truncateTracingInfoMode: TruncateTracingInfoMode = TruncateTracingInfoMode.TRUNCATE_KEY,
-    additionalPaths: List<File> = listOf(),
+    additionalPaths: List<File> = emptyList(),
   ) {
-    val actualTransformed =
-      transform(source, extra, validator, dumpTree, truncateTracingInfoMode, additionalPaths)
+    val actualTransformed = transform(
+      source = source,
+      extra = extra,
+      validator = validator,
+      dumpTree = dumpTree,
+      truncateTracingInfoMode = truncateTracingInfoMode,
+      additionalPaths = additionalPaths,
+    )
     assertEquals(
+      /* expected = */
       expectedTransformed
         .trimIndent()
         .trimTrailingWhitespacesAndAddNewlineAtEOF(),
-      actualTransformed
+      /* actual = */ actualTransformed,
     )
   }
 
@@ -232,15 +137,21 @@ abstract class AbstractIrTransformTest(useFir: Boolean) : AbstractCodegenTest(us
     validator: (element: IrElement) -> Unit = {},
     dumpTree: Boolean = false,
     truncateTracingInfoMode: TruncateTracingInfoMode = TruncateTracingInfoMode.TRUNCATE_KEY,
-    additionalPaths: List<File> = listOf(),
+    additionalPaths: List<File> = emptyList(),
   ) {
-    val actualTransformed =
-      transform(source, extra, validator, dumpTree, truncateTracingInfoMode, additionalPaths)
+    val actualTransformed = transform(
+      source = source,
+      extra = extra,
+      validator = validator,
+      dumpTree = dumpTree,
+      truncateTracingInfoMode = truncateTracingInfoMode,
+      additionalPaths = additionalPaths,
+    )
     goldenTransformRule.verifyGolden(
       GoldenTransformTestInfo(
-        source.trimIndent().trim(),
-        actualTransformed.trimIndent().trim()
-      )
+        source = source.trimIndent().trim(),
+        transformed = actualTransformed.trimIndent().trim(),
+      ),
     )
   }
 
@@ -251,15 +162,17 @@ abstract class AbstractIrTransformTest(useFir: Boolean) : AbstractCodegenTest(us
   private fun MatchResult.isFileName() = groups[4] != null
 
   private fun generateSourceInfo(sourceInfo: String, source: String): String {
-    val r = Regex("(\\d+)|([,])|([*])|([:])|C(\\(.*\\))?|L|(P\\(*\\))|@")
+    @Suppress("RegExpSimplifiable")
+    val regex = Regex("(\\d+)|([,])|([*])|([:])|C(\\(.*\\))?|L|(P\\(*\\))|@")
+
     var current = 0
-    var currentResult = r.find(sourceInfo, current)
+    var currentResult = regex.find(sourceInfo, current)
     var result = ""
 
     fun next(): MatchResult? {
-      currentResult?.let {
-        current = it.range.last + 1
-        currentResult = it.next()
+      currentResult?.let { result ->
+        current = result.range.last + 1
+        currentResult = result.next()
       }
       return currentResult
     }
@@ -275,18 +188,14 @@ abstract class AbstractIrTransformTest(useFir: Boolean) : AbstractCodegenTest(us
       if (mr != null && mr.isChar("@")) {
         // Offset
         mr = next()
-        if (mr == null || !mr.isNumber()) {
-          return null
-        }
+        if (mr == null || !mr.isNumber()) return null
         val offset = mr.number()
         mr = next()
         var ellipsis = ""
         val maxFragment = 6
         val rawLength = if (mr != null && mr.isChar("L")) {
           mr = next()
-          if (mr == null || !mr.isNumber()) {
-            return null
-          }
+          if (mr == null || !mr.isNumber()) return null
           mr.number().also { next() }
         } else {
           maxFragment
@@ -307,20 +216,13 @@ abstract class AbstractIrTransformTest(useFir: Boolean) : AbstractCodegenTest(us
 
     while (currentResult != null) {
       val mr = currentResult!!
-      if (mr.range.first != current) {
-        return "invalid source info at $current: '$sourceInfo'"
-      }
+      if (mr.range.first != current) return "invalid source info at $current: '$sourceInfo'"
       when {
         mr.isNumber() || mr.isChar("@") -> {
-          val fragment = parseLocation()
-            ?: return "invalid source info at $current: '$sourceInfo'"
+          val fragment = parseLocation() ?: return "invalid source info at $current: '$sourceInfo'"
           result += fragment
         }
-
-        mr.isFileName() -> {
-          return result + ":" + sourceInfo.substring(mr.range.last + 1)
-        }
-
+        mr.isFileName() -> return result + ":" + sourceInfo.substring(mr.range.last + 1)
         else -> {
           result += mr.text
           next()
@@ -328,8 +230,7 @@ abstract class AbstractIrTransformTest(useFir: Boolean) : AbstractCodegenTest(us
       }
       require(mr != currentResult) { "regex didn't advance" }
     }
-    if (current != sourceInfo.length)
-      return "invalid source info at $current: '$sourceInfo'"
+    if (current != sourceInfo.length) return "invalid source info at $current: '$sourceInfo'"
     return result
   }
 
@@ -339,11 +240,10 @@ abstract class AbstractIrTransformTest(useFir: Boolean) : AbstractCodegenTest(us
   }
 }
 
-fun String.trimTrailingWhitespaces(): String =
-  this.split('\n').joinToString(separator = "\n") { it.trimEnd() }
+private fun String.trimTrailingWhitespaces(): String =
+  split('\n').joinToString(separator = "\n", transform = String::trimEnd)
 
-fun String.trimTrailingWhitespacesAndAddNewlineAtEOF(): String =
-  this.trimTrailingWhitespaces().let {
-    result ->
+private fun String.trimTrailingWhitespacesAndAddNewlineAtEOF(): String =
+  trimTrailingWhitespaces().let { result ->
     if (result.endsWith("\n")) result else result + "\n"
   }

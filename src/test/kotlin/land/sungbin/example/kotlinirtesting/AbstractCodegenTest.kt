@@ -1,57 +1,21 @@
+@file:Suppress("unused")
+
 package land.sungbin.example.kotlinirtesting
 
-import java.io.File
 import land.sungbin.example.kotlinirtesting.facade.SourceFile
 import org.intellij.lang.annotations.Language
 import org.jetbrains.kotlin.codegen.GeneratedClassLoader
+import java.io.File
 
 var uniqueNumber = 0
 
-// TODO
 abstract class AbstractCodegenTest(useFir: Boolean) : AbstractCompilerTest(useFir) {
   private fun dumpClasses(loader: GeneratedClassLoader) {
-    for (
-    file in loader.allGeneratedFiles.filter {
-      it.relativePath.endsWith(".class")
-    }
-    ) {
+    val clazz = loader.allGeneratedFiles.filter { it.relativePath.endsWith(".class") }
+    for (file in clazz) {
       println("------\nFILE: ${file.relativePath}\n------")
       println(file.asText())
     }
-  }
-
-  protected fun validateBytecode(
-    @Language("kotlin")
-    src: String,
-    dumpClasses: Boolean = false,
-    validate: (String) -> Unit,
-  ) {
-    val className = "Test_REPLACEME_${uniqueNumber++}"
-    val fileName = "$className.kt"
-
-    val loader = classLoader(
-      """
-           @file:OptIn(
-             InternalComposeApi::class,
-           )
-           package test
-
-           import androidx.compose.runtime.*
-
-           $src
-
-            fun used(x: Any?) {}
-        """,
-      fileName, dumpClasses
-    )
-
-    val apiString = loader
-      .allGeneratedFiles
-      .filter { it.relativePath.endsWith(".class") }.joinToString("\n") {
-        it.asText().replace('$', '%').replace(className, "Test")
-      }
-
-    validate(apiString)
   }
 
   protected fun classLoader(
@@ -60,7 +24,7 @@ abstract class AbstractCodegenTest(useFir: Boolean) : AbstractCompilerTest(useFi
     fileName: String,
     dumpClasses: Boolean = false,
   ): GeneratedClassLoader {
-    val loader = createClassLoader(listOf(SourceFile(fileName, source)))
+    val loader = createClassLoader(listOf(SourceFile(name = fileName, source = source)))
     if (dumpClasses) dumpClasses(loader)
     return loader
   }
@@ -69,9 +33,8 @@ abstract class AbstractCodegenTest(useFir: Boolean) : AbstractCompilerTest(useFi
     sources: Map<String, String>,
     dumpClasses: Boolean = false,
   ): GeneratedClassLoader {
-    val loader = createClassLoader(
-      sources.map { (fileName, source) -> SourceFile(fileName, source) }
-    )
+    val sourceFiles = sources.map { (fileName, source) -> SourceFile(name = fileName, source = source) }
+    val loader = createClassLoader(platformSourceFiles = sourceFiles)
     if (dumpClasses) dumpClasses(loader)
     return loader
   }
@@ -82,8 +45,8 @@ abstract class AbstractCodegenTest(useFir: Boolean) : AbstractCompilerTest(useFi
     dumpClasses: Boolean = false,
   ): GeneratedClassLoader {
     val loader = createClassLoader(
-      platformSources.map { (fileName, source) -> SourceFile(fileName, source) },
-      commonSources.map { (fileName, source) -> SourceFile(fileName, source) }
+      platformSourceFiles = platformSources.map { (fileName, source) -> SourceFile(name = fileName, source = source) },
+      commonSourceFiles = commonSources.map { (fileName, source) -> SourceFile(name = fileName, source = source) },
     )
     if (dumpClasses) dumpClasses(loader)
     return loader
@@ -96,88 +59,11 @@ abstract class AbstractCodegenTest(useFir: Boolean) : AbstractCompilerTest(useFi
     forcedFirSetting: Boolean? = null,
   ): GeneratedClassLoader {
     val loader = createClassLoader(
-      sources.map { (fileName, source) -> SourceFile(fileName, source) },
+      platformSourceFiles = sources.map { (fileName, source) -> SourceFile(name = fileName, source = source) },
       additionalPaths = additionalPaths,
-      forcedFirSetting = forcedFirSetting
+      forcedFirSetting = forcedFirSetting,
     )
     if (dumpClasses) dumpClasses(loader)
     return loader
   }
-
-  protected fun testCompile(@Language("kotlin") source: String, dumpClasses: Boolean = false) {
-    classLoader(source, "Test.kt", dumpClasses)
-  }
-
-  protected val COMPOSE_VIEW_STUBS_IMPORTS = """
-        import android.view.View
-        import android.widget.TextView
-        import android.widget.Button
-        import android.view.Gravity
-        import android.widget.LinearLayout
-        import androidx.compose.runtime.Composable
-    """.trimIndent()
-
-  protected val COMPOSE_VIEW_STUBS = """
-        @Composable
-        fun TextView(
-            id: Int = 0,
-            gravity: Int = Gravity.TOP or Gravity.START,
-            text: String = "",
-            onClick: (() -> Unit)? = null,
-            onClickListener: View.OnClickListener? = null
-        ) {
-            emitView(::TextView) {
-                if (id != 0) it.id = id
-                it.text = text
-                it.gravity = gravity
-                if (onClickListener != null) it.setOnClickListener(onClickListener)
-                if (onClick != null) it.setOnClickListener(View.OnClickListener { onClick() })
-            }
-        }
-
-        @Composable
-        fun Button(
-            id: Int = 0,
-            text: String = "",
-            onClick: (() -> Unit)? = null,
-            onClickListener: View.OnClickListener? = null
-        ) {
-            emitView(::Button) {
-                if (id != 0) it.id = id
-                it.text = text
-                if (onClickListener != null) it.setOnClickListener(onClickListener)
-                if (onClick != null) it.setOnClickListener(View.OnClickListener { onClick() })
-            }
-        }
-
-        @Composable
-        fun LinearLayout(
-            id: Int = 0,
-            orientation: Int = LinearLayout.VERTICAL,
-            onClickListener: View.OnClickListener? = null,
-            content: @Composable () -> Unit
-        ) {
-            emitView(
-                ::LinearLayout,
-                {
-                    if (id != 0) it.id = id
-                    if (onClickListener != null) it.setOnClickListener(onClickListener)
-                    it.orientation = orientation
-                },
-                content
-            )
-        }
-    """.trimIndent()
-
-  protected fun testCompileWithViewStubs(source: String, dumpClasses: Boolean = false) =
-    testCompile(
-      """
-            $COMPOSE_VIEW_STUBS_IMPORTS
-
-            $source
-
-            $COMPOSE_VIEW_STUBS
-        """,
-      dumpClasses
-    )
 }

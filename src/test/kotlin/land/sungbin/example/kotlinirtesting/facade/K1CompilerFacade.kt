@@ -1,6 +1,6 @@
 package land.sungbin.example.kotlinirtesting.facade
 
-import land.sungbin.example.kotlinirtesting.exception.TestsCompilerError
+import land.sungbin.example.kotlinirtesting.exception.TestCompilerException
 import org.jetbrains.kotlin.backend.jvm.JvmIrCodegenFactory
 import org.jetbrains.kotlin.cli.common.CLIConfigurationKeys
 import org.jetbrains.kotlin.cli.jvm.compiler.CliBindingTrace
@@ -23,8 +23,8 @@ class K1AnalysisResult(
 ) : AnalysisResult {
   override val diagnostics: Map<String, List<AnalysisResult.Diagnostic>>
     get() = bindingContext.diagnostics.all().groupBy(
-      keySelector = { it.psiFile.name },
-      valueTransform = { AnalysisResult.Diagnostic(it.factoryName, it.textRanges) }
+      keySelector = { key -> key.psiFile.name },
+      valueTransform = { value -> AnalysisResult.Diagnostic(value.factoryName, value.textRanges) },
     )
 }
 
@@ -35,96 +35,93 @@ private class K1FrontendResult(
 )
 
 class K1CompilerFacade(environment: KotlinCoreEnvironment) : KotlinCompilerFacade(environment) {
-  override fun analyze(
-    platformFiles: List<SourceFile>,
-    commonFiles: List<SourceFile>,
-  ): K1AnalysisResult {
-    val allKtFiles = platformFiles.map { it.toKtFile(environment.project) } +
-      commonFiles.map {
-        it.toKtFile(environment.project).also { ktFile ->
-          ktFile.isCommonSource = true
-        }
-      }
+  override fun analyze(platformFiles: List<SourceFile>, commonFiles: List<SourceFile>): K1AnalysisResult {
+    val allKtFiles =
+      platformFiles.map { file -> file.toKtFile(environment.project) } +
+        commonFiles.map { file -> file.toKtFile(environment.project).apply { isCommonSource = true } }
 
     val result = TopDownAnalyzerFacadeForJVM.analyzeFilesWithJavaIntegration(
-      environment.project,
-      allKtFiles,
-      CliBindingTrace(),
-      environment.configuration,
-      environment::createPackagePartProvider
+      project = environment.project,
+      files = allKtFiles,
+      trace = CliBindingTrace(),
+      configuration = environment.configuration,
+      packagePartProvider = environment::createPackagePartProvider,
     )
 
     try {
       result.throwIfError()
-    } catch (e: Exception) {
-      throw TestsCompilerError(e)
+    } catch (exception: Exception) {
+      throw TestCompilerException(exception)
     }
 
-    return K1AnalysisResult(allKtFiles, result.moduleDescriptor, result.bindingContext)
+    return K1AnalysisResult(
+      files = allKtFiles,
+      moduleDescriptor = result.moduleDescriptor,
+      bindingContext = result.bindingContext,
+    )
   }
 
-  private fun frontend(
-    platformFiles: List<SourceFile>,
-    commonFiles: List<SourceFile>,
-  ): K1FrontendResult {
-    val analysisResult = analyze(platformFiles, commonFiles)
+  private fun frontend(platformFiles: List<SourceFile>, commonFiles: List<SourceFile>): K1FrontendResult {
+    val analysisResult = analyze(platformFiles = platformFiles, commonFiles = commonFiles)
 
     // `analyze` only throws if the analysis itself failed, since we use it to test code
     // with errors. That's why we have to check for errors before we run psi2ir.
     try {
       AnalyzingUtils.throwExceptionOnErrors(analysisResult.bindingContext)
     } catch (e: Exception) {
-      throw TestsCompilerError(e)
+      throw TestCompilerException(e)
     }
 
     val codegenFactory = JvmIrCodegenFactory(
-      environment.configuration,
-      environment.configuration.get(CLIConfigurationKeys.PHASE_CONFIG)
+      configuration = environment.configuration,
+      phaseConfig = environment.configuration.get(CLIConfigurationKeys.PHASE_CONFIG),
     )
 
     val state = GenerationState.Builder(
-      environment.project,
-      ClassBuilderFactories.TEST,
-      analysisResult.moduleDescriptor,
-      analysisResult.bindingContext,
-      analysisResult.files,
-      environment.configuration
-    ).isIrBackend(true).codegenFactory(codegenFactory).build()
-
+      project = environment.project,
+      builderFactory = ClassBuilderFactories.TEST,
+      module = analysisResult.moduleDescriptor,
+      bindingContext = analysisResult.bindingContext,
+      files = analysisResult.files,
+      configuration = environment.configuration,
+    )
+      .isIrBackend(true)
+      .codegenFactory(codegenFactory)
+      .build()
     state.beforeCompile()
 
     val psi2irInput = CodegenFactory.IrConversionInput.fromGenerationStateAndFiles(
-      state,
-      analysisResult.files
+      state = state,
+      files = analysisResult.files,
     )
     val backendInput = codegenFactory.convertToIr(psi2irInput)
 
     // For JVM-specific errors
     try {
       AnalyzingUtils.throwExceptionOnErrors(state.collectedExtraJvmDiagnostics)
-    } catch (e: Throwable) {
-      throw TestsCompilerError(e)
+    } catch (exception: Exception) {
+      throw TestCompilerException(exception)
     }
 
     return K1FrontendResult(
-      state,
-      backendInput,
-      codegenFactory
+      state = state,
+      backendInput = backendInput,
+      codegenFactory = codegenFactory,
     )
   }
 
   override fun compileToIr(files: List<SourceFile>): IrModuleFragment =
-    frontend(files, listOf()).backendInput.irModuleFragment
+    frontend(platformFiles = files, commonFiles = emptyList()).backendInput.irModuleFragment
 
-  override fun compile(
-    platformFiles: List<SourceFile>,
-    commonFiles: List<SourceFile>,
-  ): GenerationState = try {
-    frontend(platformFiles, commonFiles).apply {
-      codegenFactory.generateModule(state, backendInput)
-      state.factory.done()
-    }.state
-  } catch (e: Exception) {
-    throw TestsCompilerError(e)
-  }
+  override fun compile(platformFiles: List<SourceFile>, commonFiles: List<SourceFile>): GenerationState =
+    try {
+      frontend(platformFiles = platformFiles, commonFiles = commonFiles)
+        .apply {
+          codegenFactory.generateModule(state, backendInput)
+          state.factory.done()
+        }
+        .state
+    } catch (exception: Exception) {
+      throw TestCompilerException(exception)
+    }
 }

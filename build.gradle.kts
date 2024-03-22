@@ -21,7 +21,7 @@ repositories {
 
 dependencies {
   testImplementation("androidx.compose.runtime:runtime:1.6.2")
-  testImplementation("androidx.compose.compiler:compiler-hosted:1.5.10")
+  testImplementation("androidx.compose.compiler:compiler-hosted:1.5.11")
   testImplementation(kotlin("compiler", kotlinVersion))
   testImplementation("junit:junit:4.13.2")
 }

@@ -1,4 +1,4 @@
-private val kotlinVersion = "1.9.22"
+private val kotlinVersion = "1.9.25"
 
 plugins {
   kotlin("jvm") version "1.9.22"

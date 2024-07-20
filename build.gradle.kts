@@ -1,7 +1,7 @@
 private val kotlinVersion = "1.9.22"
 
 plugins {
-  kotlin("jvm") version "1.9.22"
+  kotlin("jvm") version "1.9.25"
 }
 
 sourceSets {
